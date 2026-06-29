@@ -156,8 +156,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	if *plexURL != "" && *plexToken == "" {
-		if saved := LoadToken(); saved != "" {
+	if *plexURL != "" {
+		if *plexToken != "" {
+			// Explicit token provided — save it for future runs.
+			if LoadToken() != *plexToken {
+				if err := SaveToken(*plexToken); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: could not save token: %v\n", err)
+				}
+			}
+		} else if saved := LoadToken(); saved != "" {
 			*plexToken = saved
 		} else {
 			fmt.Println("No --plex-token provided; signing in to plex.tv to obtain one.")
