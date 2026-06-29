@@ -1,6 +1,6 @@
 # mediashrink
 
-Scans a media library for large video files and transcodes them to H.265 using AMD VAAPI hardware acceleration. By default the original is kept alongside the new `.h265.mkv` output; pass `--replace` to delete it after a verified transcode. Supports Plex as an alternative to filesystem scanning for faster candidate discovery.
+Scans a media library for large video files and transcodes them to H.265 using hardware acceleration (AMD/Intel VAAPI, NVIDIA NVENC, or software fallback). By default the original is kept alongside the new `.h265.mkv` output; pass `--replace` to delete it after a verified transcode. Supports Plex as an alternative to filesystem scanning for faster candidate discovery.
 
 ## Requirements
 
@@ -91,7 +91,7 @@ PID 12345 — send SIGUSR1 to pause/resume, Ctrl+C to stop after current job.
 1. Discovers candidates via filesystem walk (`--dir`) or Plex API (`--plex-url`)
 2. Filters to files at or above `--min-size` that are not already H.265
 3. Prints the candidate list and total size, then asks for confirmation
-4. Transcodes each file to `.mkv` using `hevc_vaapi` at the given QP
+4. Transcodes each file to `.mkv` using the detected encoder at the given QP
 5. Verifies the output codec and that the duration matches the source (within 1%)
 6. On success: writes `<stem>.h265.mkv` (or replaces original if `--replace`)
 7. On failure: deletes the temp file, leaves the original untouched
