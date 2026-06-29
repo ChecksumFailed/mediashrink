@@ -96,6 +96,7 @@ PID 12345 — send SIGUSR1 to pause/resume, Ctrl+C to stop after current job.
 6. On success: writes `<stem>.h265.mkv` (or replaces original if `--replace`)
 7. On failure: deletes the temp file, leaves the original untouched
 8. Appends results to `~/.config/media-convert/history.json` for later review
+9. If `--plex-url` is set, tells Plex to re-scan the affected directories so it picks up the new files automatically
 
 ## Persistent storage
 

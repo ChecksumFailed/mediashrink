@@ -85,6 +85,7 @@ func SaveEncoderConfig(enc EncoderConfig) error {
 
 type FileRecord struct {
 	Path         string `json:"path"`
+	OutputPath   string `json:"output_path,omitempty"`
 	OriginalSize int64  `json:"original_size"`
 	SavedBytes   int64  `json:"saved_bytes"`
 	Codec        string `json:"codec"`

@@ -57,6 +57,7 @@ func (p *pauseState) toggle() {
 
 type jobResult struct {
 	path         string
+	outputPath   string
 	originalSize int64
 	codec        string
 	saved        int64
@@ -303,12 +304,14 @@ func main() {
 				n := int(counter.Add(1))
 				fmt.Printf("[%d/%d] Starting: %s\n", n, total, c.Path)
 				saved, err := Transcode(c.Path, enc, *qp, *replace)
+				result := jobResult{path: c.Path, originalSize: c.Size, codec: c.Codec, saved: saved, err: err}
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "[%d/%d] FAILED: %s: %v\n", n, total, c.Path, err)
 				} else {
+					result.outputPath = FinalPath(c.Path, *replace)
 					fmt.Printf("[%d/%d] Done: %s (saved %s)\n", n, total, c.Path, formatSize(saved))
 				}
-				resultCh <- jobResult{path: c.Path, originalSize: c.Size, codec: c.Codec, saved: saved, err: err}
+				resultCh <- result
 			}
 		}()
 	}
@@ -321,7 +324,7 @@ func main() {
 	run := RunRecord{Timestamp: time.Now()}
 	for r := range resultCh {
 		doneCount++
-		fr := FileRecord{Path: r.path, OriginalSize: r.originalSize, Codec: r.codec}
+		fr := FileRecord{Path: r.path, OutputPath: r.outputPath, OriginalSize: r.originalSize, Codec: r.codec}
 		if r.err != nil {
 			errCount++
 			fr.Error = r.err.Error()
@@ -343,6 +346,21 @@ func main() {
 	if run.Converted > 0 || run.Failed > 0 {
 		if err := AppendRun(run); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not save history: %v\n", err)
+		}
+	}
+
+	if *plexURL != "" && run.Converted > 0 {
+		var outputPaths []string
+		for _, fr := range run.Files {
+			if fr.OutputPath != "" {
+				outputPaths = append(outputPaths, fr.OutputPath)
+			}
+		}
+		if len(outputPaths) > 0 {
+			fmt.Println("\nRefreshing Plex library...")
+			if err := RefreshPlexDirs(*plexURL, *plexToken, *plexInsecure, outputPaths); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: plex refresh failed: %v\n", err)
+			}
 		}
 	}
 }

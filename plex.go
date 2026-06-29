@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"syscall"
 
@@ -16,9 +17,14 @@ type plexSectionList struct {
 }
 
 type plexSection struct {
-	Key   string `xml:"key,attr"`
-	Type  string `xml:"type,attr"`
-	Title string `xml:"title,attr"`
+	Key       string          `xml:"key,attr"`
+	Type      string          `xml:"type,attr"`
+	Title     string          `xml:"title,attr"`
+	Locations []plexLocation  `xml:"Location"`
+}
+
+type plexLocation struct {
+	Path string `xml:"path,attr"`
 }
 
 type plexItemList struct {
@@ -138,6 +144,64 @@ func FindCandidatesFromPlex(baseURL, token string, minBytes int64, insecure, ski
 	}
 
 	return candidates, nil
+}
+
+// RefreshPlexDirs tells Plex to re-scan the directories containing the given
+// file paths. Each dir is matched to its library section by location prefix.
+func RefreshPlexDirs(baseURL, token string, insecure bool, filePaths []string) error {
+	client := plexClient(insecure)
+
+	var sections plexSectionList
+	if err := plexFetch(client, baseURL, token, "/library/sections", &sections); err != nil {
+		return fmt.Errorf("fetching sections: %w", err)
+	}
+
+	// Deduplicate directories.
+	seen := map[string]bool{}
+	var dirs []string
+	for _, p := range filePaths {
+		d := p[:strings.LastIndex(p, "/")]
+		if !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+
+	for _, dir := range dirs {
+		key := ""
+		for _, s := range sections.Sections {
+			for _, loc := range s.Locations {
+				if strings.HasPrefix(dir, loc.Path) {
+					key = s.Key
+					break
+				}
+			}
+			if key != "" {
+				break
+			}
+		}
+		if key == "" {
+			fmt.Printf("  plex refresh: no section found for %s — skipping\n", dir)
+			continue
+		}
+
+		endpoint := "/library/sections/" + key + "/refresh?path=" + url.QueryEscape(dir)
+		req, err := http.NewRequest("GET", strings.TrimRight(baseURL, "/")+endpoint, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("X-Plex-Token", token)
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("refreshing %s: %w", dir, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return fmt.Errorf("plex refresh returned HTTP %d for %s", resp.StatusCode, dir)
+		}
+		fmt.Printf("  plex: refreshed %s\n", dir)
+	}
+	return nil
 }
 
 func plexFetch(client *http.Client, baseURL, token, path string, out interface{}) error {
