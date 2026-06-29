@@ -142,10 +142,15 @@ func encoderArgs(enc EncoderConfig, src, dst string, qp int) []string {
 			"-crf", strconv.Itoa(qp),
 		}, tail...)
 	default: // vaapi
+		// Hardware decode → GPU format conversion → hardware encode (zero-copy).
+		// scale_vaapi handles 8-bit and 10-bit HDR input on the GPU, avoiding
+		// the expensive CPU-side 10-bit→8-bit conversion that bottlenecks 4K HDR.
 		return append([]string{
-			"-vaapi_device", enc.Device,
+			"-hwaccel", "vaapi",
+			"-hwaccel_device", enc.Device,
+			"-hwaccel_output_format", "vaapi",
 			"-i", src,
-			"-vf", "format=nv12|vaapi,hwupload",
+			"-vf", "scale_vaapi=format=nv12",
 			"-c:v", "hevc_vaapi",
 			"-rc_mode", "CQP",
 			"-qp", strconv.Itoa(qp),
