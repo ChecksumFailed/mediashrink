@@ -29,7 +29,7 @@ func TempPath(src string) string {
 	return filepath.Join(dir, stem+".tmp.mkv")
 }
 
-func Transcode(src, vaapiDevice string, qp int, replace bool) (savedBytes int64, err error) {
+func Transcode(src string, enc EncoderConfig, qp int, replace bool) (savedBytes int64, err error) {
 	srcSize, err := fileSize(src)
 	if err != nil {
 		return 0, err
@@ -44,19 +44,7 @@ func Transcode(src, vaapiDevice string, qp int, replace bool) (savedBytes int64,
 		}
 	}()
 
-	args := []string{
-		"-vaapi_device", vaapiDevice,
-		"-i", src,
-		"-vf", "format=nv12|vaapi,hwupload",
-		"-c:v", "hevc_vaapi",
-		"-rc_mode", "CQP",
-		"-qp", strconv.Itoa(qp),
-		"-c:a", "copy",
-		"-c:s", "copy",
-		"-map", "0",
-		"-y",
-		tmp,
-	}
+	args := encoderArgs(enc, src, tmp, qp)
 
 	cmd := exec.Command("ffmpeg", args...)
 	cmd.Stderr = os.Stderr
@@ -121,6 +109,34 @@ func getDuration(path string) (float64, error) {
 		return 0, nil
 	}
 	return strconv.ParseFloat(s, 64)
+}
+
+func encoderArgs(enc EncoderConfig, src, dst string, qp int) []string {
+	tail := []string{"-c:a", "copy", "-c:s", "copy", "-map", "0", "-y", dst}
+	switch enc.Type {
+	case "nvenc":
+		return append([]string{
+			"-i", src,
+			"-c:v", "hevc_nvenc",
+			"-rc", "constqp",
+			"-qp", strconv.Itoa(qp),
+		}, tail...)
+	case "software":
+		return append([]string{
+			"-i", src,
+			"-c:v", "libx265",
+			"-crf", strconv.Itoa(qp),
+		}, tail...)
+	default: // vaapi
+		return append([]string{
+			"-vaapi_device", enc.Device,
+			"-i", src,
+			"-vf", "format=nv12|vaapi,hwupload",
+			"-c:v", "hevc_vaapi",
+			"-rc_mode", "CQP",
+			"-qp", strconv.Itoa(qp),
+		}, tail...)
+	}
 }
 
 func fileSize(path string) (int64, error) {

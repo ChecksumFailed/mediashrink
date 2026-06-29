@@ -5,8 +5,12 @@ Scans a media library for large video files and transcodes them to H.265 using A
 ## Requirements
 
 - Go 1.21+
-- `ffmpeg` and `ffprobe` with VAAPI support
-- AMD GPU with VAAPI (`/dev/dri/renderD128`)
+- `ffmpeg` and `ffprobe` built with the relevant encoder support:
+  - AMD/Intel GPU → VAAPI (`hevc_vaapi`)
+  - NVIDIA GPU → NVENC (`hevc_nvenc`)
+  - No GPU → software (`libx265`, slow)
+
+On first run the encoder is detected automatically and saved to `~/.config/media-convert/encoder.json`.
 
 ## Build
 
@@ -61,8 +65,9 @@ go build -buildvcs=false -o media-convert .
 | `--report-csv` | — | Write report to a CSV file |
 | `--history` | off | Print transcoding history and exit |
 | `--qp` | `24` | H.265 quality (18 = excellent, 24 = good, 28 = smaller files) |
-| `--jobs` | `1` | Parallel transcode jobs (VAAPI rarely benefits from >1) |
-| `--vaapi-device` | `/dev/dri/renderD128` | VAAPI device path |
+| `--jobs` | `1` | Parallel transcode jobs (hardware encoders rarely benefit from >1) |
+| `--vaapi-device` | — | Force VAAPI encoder with a specific device path |
+| `--detect-gpu` | off | Scan for GPU encoders, save result, and exit |
 | `--plex-url` | — | Plex server URL — uses Plex API instead of filesystem scan |
 | `--plex-token` | — | Plex API token (prompted and saved automatically if omitted) |
 | `--plex-insecure` | off | Skip TLS certificate verification for Plex server |
@@ -99,4 +104,5 @@ All state is kept in `~/.config/media-convert/`:
 | File | Contents |
 |---|---|
 | `token` | Saved Plex auth token (0600 permissions) |
+| `encoder.json` | Detected GPU encoder config (type + device path) |
 | `history.json` | Per-run transcoding records (JSON Lines) |

@@ -45,7 +45,7 @@ Four source files, one external dependency (`golang.org/x/term`):
 - **`plex.go`** — `FindCandidatesFromPlex(baseURL, token, minBytes, insecure, skipHEVC)`: queries the Plex API for all movie and TV libraries, returns candidates using Plex's indexed codec/size data (no ffprobe needed). `PlexLogin()` prompts for plex.tv credentials and exchanges them for an auth token. `--plex-insecure` skips TLS cert verification.
 - **`transcode.go`** — `Transcode(src, vaapiDevice, qp, replace)`: runs `ffmpeg` with `hevc_vaapi`, writes to a `.tmp.mkv` sidecar, verifies codec and duration via `ffprobe` (must be within 1% of source). When `replace=true`, atomically renames to `<stem>.mkv` and removes the original. When `replace=false` (default), writes to `<stem>.h265.mkv` and keeps the original. On any failure the temp file is cleaned up.
 - **`main.go`** — parses flags, prints candidate list with sizes, prompts for confirmation, runs a worker pool (`--jobs`) fed from a queue channel so pause/stop checks happen between jobs. Prints per-file results and a final summary. `writeReport` handles `--report` / `--report-csv` output.
-- **`config.go`** — manages `~/.config/media-convert/`: `LoadToken`/`SaveToken` for persisting the Plex auth token (0600), `AppendRun`/`PrintHistory` for the JSON Lines history log.
+- **`config.go`** — manages `~/.config/media-convert/`: `LoadToken`/`SaveToken` for the Plex auth token, `LoadEncoderConfig`/`SaveEncoderConfig`/`DetectEncoder` for GPU encoder detection and persistence, `AppendRun`/`PrintHistory` for the JSON Lines history log.
 
 ## Signals
 

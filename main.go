@@ -74,7 +74,8 @@ func main() {
 	replace := flag.Bool("replace", false, "delete original after successful transcode (default: keep original alongside .h265.mkv output)")
 	dryRun := flag.Bool("dry-run", false, "list candidates without transcoding")
 	jobs := flag.Int("jobs", 1, "number of parallel transcode jobs")
-	vaapiDevice := flag.String("vaapi-device", "/dev/dri/renderD128", "VAAPI device path")
+	vaapiDevice := flag.String("vaapi-device", "", "force VAAPI encoder with this device path (overrides saved config)")
+	detectGPU := flag.Bool("detect-gpu", false, "scan for GPU encoders, save result, and exit")
 	qp := flag.Int("qp", 24, "H.265 quantization parameter (lower = better quality, larger files)")
 	fileFlag := flag.String("file", "", "transcode a single file instead of scanning")
 	history := flag.Bool("history", false, "print transcoding history and exit")
@@ -86,6 +87,40 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+
+	if *detectGPU {
+		enc, notes := DetectEncoder()
+		for _, n := range notes {
+			fmt.Println(" ", n)
+		}
+		fmt.Printf("Selected: %s\n", enc.Description())
+		if err := SaveEncoderConfig(enc); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: could not save encoder config: %v\n", err)
+		} else {
+			fmt.Println("Saved to ~/.config/media-convert/encoder.json")
+		}
+		return
+	}
+
+	// Resolve encoder: explicit flag > saved config > auto-detect on first run.
+	var enc EncoderConfig
+	if *vaapiDevice != "" {
+		enc = EncoderConfig{Type: "vaapi", Device: *vaapiDevice}
+	} else {
+		enc = LoadEncoderConfig()
+		if enc.Type == "" {
+			var notes []string
+			enc, notes = DetectEncoder()
+			fmt.Println("No encoder configured — detecting GPU:")
+			for _, n := range notes {
+				fmt.Println(" ", n)
+			}
+			fmt.Printf("Selected: %s\n", enc.Description())
+			if err := SaveEncoderConfig(enc); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not save encoder config: %v\n", err)
+			}
+		}
 	}
 
 	var flagErrs []string
@@ -108,9 +143,9 @@ func main() {
 			flagErrs = append(flagErrs, fmt.Sprintf("--plex-url %q is not a valid URL", *plexURL))
 		}
 	}
-	if *fileFlag == "" && *plexURL == "" {
-		if _, err := os.Stat(*vaapiDevice); err != nil {
-			flagErrs = append(flagErrs, fmt.Sprintf("--vaapi-device %q: %v", *vaapiDevice, err))
+	if enc.Type == "vaapi" {
+		if _, err := os.Stat(enc.Device); err != nil {
+			flagErrs = append(flagErrs, fmt.Sprintf("VAAPI device %q: %v", enc.Device, err))
 		}
 	}
 	if len(flagErrs) > 0 {
@@ -267,7 +302,7 @@ func main() {
 
 				n := int(counter.Add(1))
 				fmt.Printf("[%d/%d] Starting: %s\n", n, total, c.Path)
-				saved, err := Transcode(c.Path, *vaapiDevice, *qp, *replace)
+				saved, err := Transcode(c.Path, enc, *qp, *replace)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "[%d/%d] FAILED: %s: %v\n", n, total, c.Path, err)
 				} else {
