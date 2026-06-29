@@ -126,7 +126,7 @@ func getDuration(path string) (float64, error) {
 }
 
 func encoderArgs(enc EncoderConfig, src, dst string, qp int) []string {
-	tail := []string{"-c:a", "copy", "-c:s", "copy", "-map", "0", "-y", dst}
+	tail := []string{"-c:a", "copy", "-c:s", "copy", "-map", "0:V", "-map", "0:a?", "-map", "0:s?", "-map", "0:t?", "-y", dst}
 	switch enc.Type {
 	case "nvenc":
 		return append([]string{
