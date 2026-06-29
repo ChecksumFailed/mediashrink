@@ -291,6 +291,8 @@ func main() {
 
 	fmt.Printf("PID %d — send SIGUSR1 to pause/resume, Ctrl+C to stop after current job.\n\n", os.Getpid())
 
+	runID := time.Now().Format(time.RFC3339)
+
 	workCh := make(chan Candidate, total)
 	for _, c := range candidates {
 		workCh <- c
@@ -363,48 +365,47 @@ func main() {
 
 	var totalSaved int64
 	var errCount, doneCount int
-	run := RunRecord{Timestamp: time.Now()}
+	var outputPaths []string
 	for r := range resultCh {
 		doneCount++
 		fr := FileRecord{Path: r.path, OutputPath: r.outputPath, OriginalSize: r.originalSize, Codec: r.codec}
+		converted, failed := 1, 0
 		if r.err != nil {
 			errCount++
 			fr.Error = r.err.Error()
+			converted, failed = 0, 1
 		} else {
 			fr.SavedBytes = r.saved
 			if r.saved > 0 {
 				totalSaved += r.saved
 			}
+			if r.outputPath != "" {
+				outputPaths = append(outputPaths, r.outputPath)
+			}
 		}
-		run.Files = append(run.Files, fr)
-	}
-	run.Converted = doneCount - errCount
-	run.Failed = errCount
-	run.TotalSaved = totalSaved
-
-	skipped := total - doneCount
-	fmt.Printf("\n=== Summary ===\n")
-	fmt.Printf("Converted: %d  Failed: %d  Skipped: %d\n", run.Converted, errCount, skipped)
-	fmt.Printf("Space reclaimed: %s\n", formatSize(totalSaved))
-
-	if run.Converted > 0 || run.Failed > 0 {
-		if err := AppendRun(run); err != nil {
+		rec := RunRecord{
+			RunID:      runID,
+			Timestamp:  time.Now(),
+			Files:      []FileRecord{fr},
+			Converted:  converted,
+			Failed:     failed,
+			TotalSaved: fr.SavedBytes,
+		}
+		if err := AppendRun(rec); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: could not save history: %v\n", err)
 		}
 	}
 
-	if *plexURL != "" && run.Converted > 0 {
-		var outputPaths []string
-		for _, fr := range run.Files {
-			if fr.OutputPath != "" {
-				outputPaths = append(outputPaths, fr.OutputPath)
-			}
-		}
-		if len(outputPaths) > 0 {
-			fmt.Println("\nRefreshing Plex library...")
-			if err := RefreshPlexDirs(*plexURL, *plexToken, *plexInsecure, outputPaths); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: plex refresh failed: %v\n", err)
-			}
+	skipped := total - doneCount
+	converted := doneCount - errCount
+	fmt.Printf("\n=== Summary ===\n")
+	fmt.Printf("Converted: %d  Failed: %d  Skipped: %d\n", converted, errCount, skipped)
+	fmt.Printf("Space reclaimed: %s\n", formatSize(totalSaved))
+
+	if *plexURL != "" && len(outputPaths) > 0 {
+		fmt.Println("\nRefreshing Plex library...")
+		if err := RefreshPlexDirs(*plexURL, *plexToken, *plexInsecure, outputPaths); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: plex refresh failed: %v\n", err)
 		}
 	}
 }

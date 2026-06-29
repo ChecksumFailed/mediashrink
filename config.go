@@ -92,6 +92,7 @@ type FileRecord struct {
 }
 
 type RunRecord struct {
+	RunID      string       `json:"run_id,omitempty"`
 	Timestamp  time.Time    `json:"timestamp"`
 	Files      []FileRecord `json:"files"`
 	TotalSaved int64        `json:"total_saved"`
@@ -173,17 +174,47 @@ func PrintHistory() error {
 		return nil
 	}
 
+	// Group consecutive records that share the same non-empty RunID into one
+	// display entry. Old records (RunID=="") each form their own group.
+	type group struct {
+		runID      string
+		timestamp  time.Time
+		files      []FileRecord
+		converted  int
+		failed     int
+		totalSaved int64
+	}
+	var groups []group
+	for _, r := range records {
+		if r.RunID != "" && len(groups) > 0 && groups[len(groups)-1].runID == r.RunID {
+			g := &groups[len(groups)-1]
+			g.files = append(g.files, r.Files...)
+			g.converted += r.Converted
+			g.failed += r.Failed
+			g.totalSaved += r.TotalSaved
+		} else {
+			groups = append(groups, group{
+				runID:      r.RunID,
+				timestamp:  r.Timestamp,
+				files:      append([]FileRecord(nil), r.Files...),
+				converted:  r.Converted,
+				failed:     r.Failed,
+				totalSaved: r.TotalSaved,
+			})
+		}
+	}
+
 	var totalSaved int64
 	var totalConverted, totalFailed int
-	for i, r := range records {
+	for i, g := range groups {
 		fmt.Printf("Run %d — %s: %d converted, %d failed, %s saved\n",
 			i+1,
-			r.Timestamp.Local().Format("2006-01-02 15:04"),
-			r.Converted,
-			r.Failed,
-			formatSize(r.TotalSaved),
+			g.timestamp.Local().Format("2006-01-02 15:04"),
+			g.converted,
+			g.failed,
+			formatSize(g.totalSaved),
 		)
-		for _, f := range r.Files {
+		for _, f := range g.files {
 			if f.Error != "" {
 				fmt.Printf("  ✗  %s\n     error: %s\n", f.Path, f.Error)
 			} else {
@@ -195,12 +226,12 @@ func PrintHistory() error {
 			}
 		}
 		fmt.Println()
-		totalSaved += r.TotalSaved
-		totalConverted += r.Converted
-		totalFailed += r.Failed
+		totalSaved += g.totalSaved
+		totalConverted += g.converted
+		totalFailed += g.failed
 	}
 
 	fmt.Printf("Total: %d converted, %d failed, %s saved across %d run(s)\n",
-		totalConverted, totalFailed, formatSize(totalSaved), len(records))
+		totalConverted, totalFailed, formatSize(totalSaved), len(groups))
 	return nil
 }
