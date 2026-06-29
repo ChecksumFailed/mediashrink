@@ -64,6 +64,12 @@ type jobResult struct {
 	err          error
 }
 
+type moveJob struct {
+	candidate Candidate
+	tmpPath   string
+	jobNum    int
+}
+
 func main() {
 	dir := flag.String("dir", "/mnt/Media", "root media directory (used when --plex-url is not set)")
 	plexURL := flag.String("plex-url", "", "Plex server URL (e.g. http://localhost:32400); skips filesystem scan")
@@ -79,6 +85,7 @@ func main() {
 	detectGPU := flag.Bool("detect-gpu", false, "scan for GPU encoders, save result, and exit")
 	qp := flag.Int("qp", 24, "H.265 quantization parameter (lower = better quality, larger files)")
 	fileFlag := flag.String("file", "", "transcode a single file instead of scanning")
+	tempDir := flag.String("temp-dir", "", "write temp files here during transcoding, then move to destination (useful when output is on a NAS)")
 	history := flag.Bool("history", false, "print transcoding history and exit")
 	flag.Parse()
 
@@ -137,6 +144,13 @@ func main() {
 	if *fileFlag == "" && *plexURL == "" {
 		if _, err := os.Stat(*dir); err != nil {
 			flagErrs = append(flagErrs, fmt.Sprintf("--dir %q: %v", *dir, err))
+		}
+	}
+	if *tempDir != "" {
+		if info, err := os.Stat(*tempDir); err != nil {
+			flagErrs = append(flagErrs, fmt.Sprintf("--temp-dir %q: %v", *tempDir, err))
+		} else if !info.IsDir() {
+			flagErrs = append(flagErrs, fmt.Sprintf("--temp-dir %q: not a directory", *tempDir))
 		}
 	}
 	if *plexURL != "" {
@@ -283,16 +297,16 @@ func main() {
 	}
 	close(workCh)
 
+	moveCh := make(chan moveJob, total)
 	resultCh := make(chan jobResult, total)
 	var counter atomic.Int32
-	var wg sync.WaitGroup
+	var encodeWg sync.WaitGroup
 
 	for j := 0; j < *jobs; j++ {
-		wg.Add(1)
+		encodeWg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer encodeWg.Done()
 			for c := range workCh {
-				// Check stop before starting next job.
 				select {
 				case <-stopCh:
 					return
@@ -301,7 +315,6 @@ func main() {
 
 				pause.waitIfPaused()
 
-				// Re-check stop in case it was set while we were paused.
 				select {
 				case <-stopCh:
 					return
@@ -309,22 +322,44 @@ func main() {
 				}
 
 				n := int(counter.Add(1))
-				fmt.Printf("[%d/%d] Starting: %s\n", n, total, c.Path)
-				saved, err := Transcode(c.Path, enc, *qp, *replace)
-				result := jobResult{path: c.Path, originalSize: c.Size, codec: c.Codec, saved: saved, err: err}
+				fmt.Printf("[%d/%d] Encoding: %s\n", n, total, c.Path)
+				tmpPath, err := EncodeAndVerify(c.Path, enc, *qp, *tempDir)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "[%d/%d] FAILED: %s: %v\n", n, total, c.Path, err)
-				} else {
-					result.outputPath = FinalPath(c.Path, *replace)
-					fmt.Printf("[%d/%d] Done: %s (saved %s)\n", n, total, c.Path, formatSize(saved))
+					resultCh <- jobResult{path: c.Path, originalSize: c.Size, codec: c.Codec, err: err}
+					continue
 				}
-				resultCh <- result
+				moveCh <- moveJob{candidate: c, tmpPath: tmpPath, jobNum: n}
 			}
 		}()
 	}
 
-	wg.Wait()
-	close(resultCh)
+	// Close moveCh once all encode workers are done.
+	go func() {
+		encodeWg.Wait()
+		close(moveCh)
+	}()
+
+	// Single move goroutine: copy temp → final destination while next encode runs.
+	go func() {
+		for job := range moveCh {
+			c := job.candidate
+			n := job.jobNum
+			if *tempDir != "" {
+				fmt.Printf("[%d/%d] Moving to destination: %s\n", n, total, c.Path)
+			}
+			saved, err := CommitTemp(c.Path, job.tmpPath, *replace)
+			result := jobResult{path: c.Path, originalSize: c.Size, codec: c.Codec, saved: saved, err: err}
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[%d/%d] FAILED (move): %s: %v\n", n, total, c.Path, err)
+			} else {
+				result.outputPath = FinalPath(c.Path, *replace)
+				fmt.Printf("[%d/%d] Done: %s (saved %s)\n", n, total, c.Path, formatSize(saved))
+			}
+			resultCh <- result
+		}
+		close(resultCh)
+	}()
 
 	var totalSaved int64
 	var errCount, doneCount int
@@ -336,8 +371,10 @@ func main() {
 			errCount++
 			fr.Error = r.err.Error()
 		} else {
-			totalSaved += r.saved
 			fr.SavedBytes = r.saved
+			if r.saved > 0 {
+				totalSaved += r.saved
+			}
 		}
 		run.Files = append(run.Files, fr)
 	}

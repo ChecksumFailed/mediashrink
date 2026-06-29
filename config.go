@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"text/tabwriter"
 	"time"
 )
 
@@ -174,24 +173,34 @@ func PrintHistory() error {
 		return nil
 	}
 
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "#\tDATE\tCONVERTED\tFAILED\tSPACE SAVED")
-	fmt.Fprintln(w, "-\t----\t---------\t------\t-----------")
 	var totalSaved int64
 	var totalConverted, totalFailed int
 	for i, r := range records {
-		fmt.Fprintf(w, "%d\t%s\t%d\t%d\t%s\n",
+		fmt.Printf("Run %d — %s: %d converted, %d failed, %s saved\n",
 			i+1,
 			r.Timestamp.Local().Format("2006-01-02 15:04"),
 			r.Converted,
 			r.Failed,
 			formatSize(r.TotalSaved),
 		)
+		for _, f := range r.Files {
+			if f.Error != "" {
+				fmt.Printf("  ✗  %s\n     error: %s\n", f.Path, f.Error)
+			} else {
+				out := f.OutputPath
+				if out == "" {
+					out = f.Path
+				}
+				fmt.Printf("  ✓  %s → %s (%s saved)\n", f.Path, out, formatSize(f.SavedBytes))
+			}
+		}
+		fmt.Println()
 		totalSaved += r.TotalSaved
 		totalConverted += r.Converted
 		totalFailed += r.Failed
 	}
-	fmt.Fprintln(w, "\t\t\t\t")
-	fmt.Fprintf(w, "Total\t\t%d\t%d\t%s\n", totalConverted, totalFailed, formatSize(totalSaved))
-	return w.Flush()
+
+	fmt.Printf("Total: %d converted, %d failed, %s saved across %d run(s)\n",
+		totalConverted, totalFailed, formatSize(totalSaved), len(records))
+	return nil
 }

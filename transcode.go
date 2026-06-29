@@ -2,12 +2,14 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 func FinalPath(src string, replace bool) string {
@@ -21,23 +23,21 @@ func FinalPath(src string, replace bool) string {
 	return filepath.Join(dir, stem+".h265.mkv")
 }
 
-func TempPath(src string) string {
-	dir := filepath.Dir(src)
+func TempPath(src, tempDir string) string {
 	base := filepath.Base(src)
 	ext := filepath.Ext(base)
 	stem := base[:len(base)-len(ext)]
+	dir := filepath.Dir(src)
+	if tempDir != "" {
+		dir = tempDir
+	}
 	return filepath.Join(dir, stem+".tmp.mkv")
 }
 
-func Transcode(src string, enc EncoderConfig, qp int, replace bool) (savedBytes int64, err error) {
-	srcSize, err := fileSize(src)
-	if err != nil {
-		return 0, err
-	}
-
-	tmp := TempPath(src)
-	final := FinalPath(src, replace)
-
+// EncodeAndVerify runs ffmpeg and verifies the output, returning the temp file path.
+// The caller is responsible for committing or cleaning up the temp file.
+func EncodeAndVerify(src string, enc EncoderConfig, qp int, tempDir string) (tmpPath string, err error) {
+	tmp := TempPath(src, tempDir)
 	defer func() {
 		if err != nil {
 			os.Remove(tmp)
@@ -45,20 +45,34 @@ func Transcode(src string, enc EncoderConfig, qp int, replace bool) (savedBytes 
 	}()
 
 	args := encoderArgs(enc, src, tmp, qp)
-
 	cmd := exec.Command("ffmpeg", args...)
 	cmd.Stderr = os.Stderr
 	if runErr := cmd.Run(); runErr != nil {
-		return 0, fmt.Errorf("ffmpeg failed: %w", runErr)
+		return "", fmt.Errorf("ffmpeg failed: %w", runErr)
 	}
 
 	if err = verifyOutput(src, tmp); err != nil {
-		return 0, fmt.Errorf("verification failed: %w", err)
+		return "", fmt.Errorf("verification failed: %w", err)
 	}
 
-	if err = os.Rename(tmp, final); err != nil {
-		return 0, fmt.Errorf("rename failed: %w", err)
+	return tmp, nil
+}
+
+// CommitTemp moves the verified temp file to its final destination and
+// optionally removes the original. Returns bytes saved.
+func CommitTemp(src, tmpPath string, replace bool) (savedBytes int64, err error) {
+	srcSize, err := fileSize(src)
+	if err != nil {
+		os.Remove(tmpPath)
+		return 0, err
 	}
+
+	final := FinalPath(src, replace)
+	if err = moveFile(tmpPath, final); err != nil {
+		os.Remove(tmpPath)
+		return 0, fmt.Errorf("move failed: %w", err)
+	}
+
 	if replace && src != final {
 		if err = os.Remove(src); err != nil {
 			return 0, fmt.Errorf("removing original: %w", err)
@@ -137,6 +151,42 @@ func encoderArgs(enc EncoderConfig, src, dst string, qp int) []string {
 			"-qp", strconv.Itoa(qp),
 		}, tail...)
 	}
+}
+
+func moveFile(src, dst string) error {
+	if err := os.Rename(src, dst); err == nil {
+		return nil
+	} else if !isCrossDevice(err) {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err = io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(dst)
+		return err
+	}
+	if err = out.Close(); err != nil {
+		os.Remove(dst)
+		return err
+	}
+	return os.Remove(src)
+}
+
+func isCrossDevice(err error) bool {
+	if le, ok := err.(*os.LinkError); ok {
+		if se, ok := le.Err.(syscall.Errno); ok {
+			return se == syscall.EXDEV
+		}
+	}
+	return false
 }
 
 func fileSize(path string) (int64, error) {

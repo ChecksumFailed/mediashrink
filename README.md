@@ -48,7 +48,10 @@ go build -buildvcs=false -o media-convert .
 ./media-convert --report --min-size 10
 ./media-convert --report-csv report.csv
 
-# View transcoding history
+# Write temp files to local NVMe while output goes to a NAS share
+./media-convert --temp-dir /mnt/nvme/tmp --replace
+
+# View transcoding history (shows per-file results and any errors)
 ./media-convert --history
 ```
 
@@ -68,6 +71,7 @@ go build -buildvcs=false -o media-convert .
 | `--jobs` | `1` | Parallel transcode jobs (hardware encoders rarely benefit from >1) |
 | `--vaapi-device` | — | Force VAAPI encoder with a specific device path |
 | `--detect-gpu` | off | Scan for GPU encoders, save result, and exit |
+| `--temp-dir` | — | Write temp files here during encoding, then move to destination (useful when output is on a NAS) |
 | `--plex-url` | — | Plex server URL — uses Plex API instead of filesystem scan |
 | `--plex-token` | — | Plex API token (prompted and saved automatically if omitted) |
 | `--plex-insecure` | off | Skip TLS certificate verification for Plex server |
@@ -91,12 +95,13 @@ PID 12345 — send SIGUSR1 to pause/resume, Ctrl+C to stop after current job.
 1. Discovers candidates via filesystem walk (`--dir`) or Plex API (`--plex-url`)
 2. Filters to files at or above `--min-size` that are not already H.265
 3. Prints the candidate list and total size, then asks for confirmation
-4. Transcodes each file to `.mkv` using the detected encoder at the given QP
+4. Encodes each file to a temp `.tmp.mkv` (in `--temp-dir` if set, otherwise alongside the source)
 5. Verifies the output codec and that the duration matches the source (within 1%)
-6. On success: writes `<stem>.h265.mkv` (or replaces original if `--replace`)
-7. On failure: deletes the temp file, leaves the original untouched
-8. Appends results to `~/.config/media-convert/history.json` for later review
-9. If `--plex-url` is set, tells Plex to re-scan the affected directories so it picks up the new files automatically
+6. Moves the verified temp file to its final destination (cross-device copy+delete if needed)
+7. On success: writes `<stem>.h265.mkv` (or replaces original if `--replace`)
+8. On failure: deletes the temp file, leaves the original untouched
+9. Appends results to `~/.config/media-convert/history.json` for later review (including per-file errors)
+10. If `--plex-url` is set, tells Plex to re-scan the affected directories so it picks up the new files automatically
 
 ## Persistent storage
 
