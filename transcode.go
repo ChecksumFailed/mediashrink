@@ -37,6 +37,9 @@ func TempPath(src, tempDir string) string {
 // EncodeAndVerify runs ffmpeg and verifies the output, returning the temp file path.
 // The caller is responsible for committing or cleaning up the temp file.
 func EncodeAndVerify(src string, enc EncoderConfig, qp int, tempDir string, srcCodec string) (tmpPath string, err error) {
+	if enc.Type == "vaapi" && !vaapiHWDecodeSupported(srcCodec) {
+		fmt.Printf("  [%s] no VAAPI hw decode — using libx265 software encode (~80 fps)\n", srcCodec)
+	}
 	tmp := TempPath(src, tempDir)
 	defer func() {
 		if err != nil {
@@ -166,15 +169,14 @@ func encoderArgs(enc EncoderConfig, src, dst string, qp int, srcCodec string) []
 				"-qp", strconv.Itoa(qp),
 			}, tail...)
 		}
-		// Fallback: software decode + GPU upload + GPU encode.
-		// Used for codecs VCN can't hardware-decode (e.g. mpeg2video, vc1).
+		// Fallback: libx265 software encode. AMD Mesa's hwupload/VPP path for
+		// software-decoded content is unusably slow (< 1 fps) on RDNA2; libx265
+		// at preset=fast runs ~80–120 fps on the CPU, which is dramatically better.
 		return append([]string{
-			"-vaapi_device", enc.Device,
 			"-i", src,
-			"-vf", "format=nv12|vaapi,hwupload",
-			"-c:v", "hevc_vaapi",
-			"-rc_mode", "CQP",
-			"-qp", strconv.Itoa(qp),
+			"-c:v", "libx265",
+			"-preset", "fast",
+			"-crf", strconv.Itoa(qp),
 		}, tail...)
 	}
 }
