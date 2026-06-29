@@ -36,7 +36,7 @@ func TempPath(src, tempDir string) string {
 
 // EncodeAndVerify runs ffmpeg and verifies the output, returning the temp file path.
 // The caller is responsible for committing or cleaning up the temp file.
-func EncodeAndVerify(src string, enc EncoderConfig, qp int, tempDir string) (tmpPath string, err error) {
+func EncodeAndVerify(src string, enc EncoderConfig, qp int, tempDir string, srcCodec string) (tmpPath string, err error) {
 	tmp := TempPath(src, tempDir)
 	defer func() {
 		if err != nil {
@@ -44,7 +44,7 @@ func EncodeAndVerify(src string, enc EncoderConfig, qp int, tempDir string) (tmp
 		}
 	}()
 
-	args := encoderArgs(enc, src, tmp, qp)
+	args := encoderArgs(enc, src, tmp, qp, srcCodec)
 	cmd := exec.Command("ffmpeg", args...)
 	cmd.Stderr = os.Stderr
 	if runErr := cmd.Run(); runErr != nil {
@@ -125,7 +125,17 @@ func getDuration(path string) (float64, error) {
 	return strconv.ParseFloat(s, 64)
 }
 
-func encoderArgs(enc EncoderConfig, src, dst string, qp int) []string {
+// vaapiHWDecodeSupported returns true for codecs the AMD VCN block can
+// hardware-decode. Unsupported codecs fall back to software decode + hwupload.
+func vaapiHWDecodeSupported(codec string) bool {
+	switch codec {
+	case "h264", "hevc", "vp9", "av1", "vp8":
+		return true
+	}
+	return false
+}
+
+func encoderArgs(enc EncoderConfig, src, dst string, qp int, srcCodec string) []string {
 	tail := []string{"-c:a", "copy", "-c:s", "copy", "-map", "0:V", "-map", "0:a?", "-map", "0:s?", "-map", "0:t?", "-y", dst}
 	switch enc.Type {
 	case "nvenc":
@@ -142,15 +152,26 @@ func encoderArgs(enc EncoderConfig, src, dst string, qp int) []string {
 			"-crf", strconv.Itoa(qp),
 		}, tail...)
 	default: // vaapi
-		// Hardware decode → GPU format conversion → hardware encode (zero-copy).
-		// scale_vaapi handles 8-bit and 10-bit HDR input on the GPU, avoiding
-		// the expensive CPU-side 10-bit→8-bit conversion that bottlenecks 4K HDR.
+		if vaapiHWDecodeSupported(srcCodec) {
+			// Zero-copy: GPU decode → GPU format conversion → GPU encode.
+			// scale_vaapi handles both 8-bit and 10-bit HDR on the GPU.
+			return append([]string{
+				"-hwaccel", "vaapi",
+				"-hwaccel_device", enc.Device,
+				"-hwaccel_output_format", "vaapi",
+				"-i", src,
+				"-vf", "scale_vaapi=format=nv12",
+				"-c:v", "hevc_vaapi",
+				"-rc_mode", "CQP",
+				"-qp", strconv.Itoa(qp),
+			}, tail...)
+		}
+		// Fallback: software decode + GPU upload + GPU encode.
+		// Used for codecs VCN can't hardware-decode (e.g. mpeg2video, vc1).
 		return append([]string{
-			"-hwaccel", "vaapi",
-			"-hwaccel_device", enc.Device,
-			"-hwaccel_output_format", "vaapi",
+			"-vaapi_device", enc.Device,
 			"-i", src,
-			"-vf", "scale_vaapi=format=nv12",
+			"-vf", "format=nv12|vaapi,hwupload",
 			"-c:v", "hevc_vaapi",
 			"-rc_mode", "CQP",
 			"-qp", strconv.Itoa(qp),

@@ -323,7 +323,7 @@ func main() {
 
 				n := int(counter.Add(1))
 				fmt.Printf("[%d/%d] Encoding: %s\n", n, total, c.Path)
-				tmpPath, err := EncodeAndVerify(c.Path, enc, *qp, *tempDir)
+				tmpPath, err := EncodeAndVerify(c.Path, enc, *qp, *tempDir, c.Codec)
 				if err != nil {
 					fmt.Fprintf(os.Stderr, "[%d/%d] FAILED: %s: %v\n", n, total, c.Path, err)
 					resultCh <- jobResult{path: c.Path, originalSize: c.Size, codec: c.Codec, err: err}
